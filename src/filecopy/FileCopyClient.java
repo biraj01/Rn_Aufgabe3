@@ -86,20 +86,67 @@ public class FileCopyClient extends Thread {
 
     while (true) {
       
-      if(seq >= this.windowSize || seq >= 100202){
-        //recieveAck
-      }else{
-        ++seq;
+      //read next packet
+      // put in buffer if the buffer is not full
+      //send packet with seq nr nextSeqNr
+      FC_Timer timer  = new FC_Timer(timeoutValue, null, nextSeqNum);
+      timer.start();
+      //increase the timer
+      nextSeqNum++;
+      //If timeout
+      timeoutTask(nextSeqNum -- );
+      //update the next timeout value
+      computeTimeoutValue(timeoutValue);
+      timer.start();
+      //recieve Ack n  and put n in sendbuffer
+       // * mark n as quitted
+      // * timer for n stop
+      timer.interrupt();
+      //compute new roundtriptime
+      //if n == sendbase delete all packet until a not quitted packet in sendbuffer is
+      //set bendbase = seqnr of that packet
+      for(int i = 0; i< senderbuff.size(); i++){
+        if(senderbuff.get(i).isValidACK()){
+          senderbuff.remove(i);
+        }else{
+          sendbase =  senderbuff.get(i).getSeqNum();
+        }
       }
-      if (windowSize == 0) {
-        windowSize = Math.min(queue.size(), maxWindowSize);
-      }
-      for (int i = 0; i < windowSize; i++) {
-        FCpacket packet = queue.get(0);
-      }
+      
+      //Todo empfang von quittungen als eigene Thread
+      
+//      if(seq >= this.windowSize || seq >= 100202){
+//        //recieveAck
+//      }else{
+//        ++seq;
+//      }
+//      if (windowSize == 0) {
+//        windowSize = Math.min(senderbuff.size(), maxWindowSize);
+//      }
+//      for (int i = 0; i < windowSize; i++) {
+//        FCpacket packet = senderbuff.get(0);
+//      }
     }
     // ToDo!!
 
+  }
+  
+  private void recieveAck(){
+    
+    
+  }
+  
+  private class recieveThread extends Thread{
+    
+    public void run(){
+      
+      
+    }
+  }
+  
+  private void insertPacketinBuffer(){
+    
+    
   }
 
   /**
