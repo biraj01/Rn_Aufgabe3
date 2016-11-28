@@ -63,6 +63,14 @@ public class FileCopyClient extends Thread {
   // Constructor
   public FileCopyClient(String serverArg, String sourcePathArg, String destPathArg, String windowSizeArg,
       String errorRateArg) {
+	  System.out.println("--- Print Parameters ---");
+	  System.out.println(serverArg);
+	  System.out.println(new File(sourcePathArg).getAbsolutePath());
+	  System.out.println(new File(destPathArg).getAbsolutePath());
+	  System.out.println(windowSizeArg);
+	  System.out.println(errorRateArg);
+	  System.out.println("------");
+	  
     servername = serverArg;
     sourcePath = sourcePathArg;
     destPath = destPathArg;
@@ -74,14 +82,28 @@ public class FileCopyClient extends Thread {
 
   private void connect() {
     try {
-      client = new DatagramSocket(FileCopyServer.SERVER_PORT, InetAddress.getByName(servername));
+      client = new DatagramSocket();
     } catch (SocketException e) {
-      e.printStackTrace();
-    } catch (UnknownHostException e) {
       e.printStackTrace();
     }
   }
+  public void runFileCopyClient2() throws IOException {
+//      DatagramSocket clientSocket = new DatagramSocket();
+      InetAddress IPAddress = InetAddress.getByName("localhost");
+//      byte[] sendData = new byte[UDP_PACKET_SIZE];
+//      long seq = 0;
+//      String temp = "00000000target/test.txt;5;0";
+//      sendData = temp.getBytes();
+//      FCpacket packet = new FCpacket(seq,sendData, temp.length());
+      FCpacket packet = makeControlPacket();
+//      sendData = packet.getData();
+      DatagramPacket sendPacket = new DatagramPacket(packet.getData(), packet.getData().length, IPAddress, SERVER_PORT);
+      client.send(sendPacket);
+      //
+      
+      
 
+  }
   public void runFileCopyClient() {
 
     while (true) {
@@ -217,7 +239,8 @@ public class FileCopyClient extends Thread {
 
   public static void main(String argv[]) throws Exception {
     FileCopyClient myClient = new FileCopyClient(argv[0], argv[1], argv[2], argv[3], argv[4]);
-    myClient.runFileCopyClient();
+//    myClient.runFileCopyClient();
+    myClient.runFileCopyClient2();
   }
 
 }

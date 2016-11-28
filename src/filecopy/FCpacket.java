@@ -1,5 +1,7 @@
 package filecopy;
 
+import java.util.Arrays;
+
 /* FCpacket.java
  Version 1.0
  Praktikum Rechnernetze HAW Hamburg
@@ -25,7 +27,9 @@ public class FCpacket implements Comparable<FCpacket> {
    */
   public FCpacket(long seqNum, byte[] packetData, int packetLen) {
     data = new byte[packetLen];
+    System.out.println(Arrays.toString(packetData));
     System.arraycopy(packetData, 0, data, 0, packetLen);
+    System.out.println(Arrays.toString(data));
     dataLen = packetLen;
     seqNumber = seqNum;
     writeBytes(seqNum, seqNumberBytes, 0, 8);
