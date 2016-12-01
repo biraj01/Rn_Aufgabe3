@@ -8,6 +8,8 @@ package filecopy;
 
 import java.io.*;
 import java.net.*;
+import java.util.Collections;
+import java.util.Iterator;
 import java.util.LinkedList;
 
 public class FileCopyClient extends Thread {
@@ -26,7 +28,7 @@ public class FileCopyClient extends Thread {
 
   public String destPath;
 
-  public int windowSize;
+  public int windowSize = 10;
 
   public int maxWindowSize = 128;
 
@@ -40,23 +42,21 @@ public class FileCopyClient extends Thread {
 
   private FC_Timer timeoutTimer;
 
-  private LinkedList<FCpacket> senderbuff; //Window size 
-  
+  private LinkedList<FCpacket> senderbuff; // Window size
+
   private FileInputStream input;
-  
+
   private long sendbase;
 
   private double expRTT;
 
   private double jitter;
 
-  private DatagramSocket client;
-  
   private int seq;
 
-  private int timeouts;   //Number of timeouts 
-  
-  private int nextSeqNum; //Sequence Number of next packet to be send
+  private int timeouts; // Number of timeouts
+
+  private int nextSeqNum; // Sequence Number of next packet to be send
 
   // ... ToDo
 
@@ -64,89 +64,94 @@ public class FileCopyClient extends Thread {
   public FileCopyClient(String serverArg, String sourcePathArg, String destPathArg, String windowSizeArg,
       String errorRateArg) {
     servername = serverArg;
+    System.out.println(servername);
     sourcePath = sourcePathArg;
     destPath = destPathArg;
+    senderbuff = new LinkedList<>();
+    System.out.println(sourcePath);
+    System.out.println(destPath);
     windowSize = Integer.parseInt(windowSizeArg);
     serverErrorRate = Long.parseLong(errorRateArg);
+    try {
+      input = new FileInputStream(sourcePath);
+    } catch (FileNotFoundException e) {
+      e.printStackTrace();
+    }
 
-    connect();
   }
 
   private void connect() {
     try {
-      client = new DatagramSocket(FileCopyServer.SERVER_PORT, InetAddress.getByName(servername));
+      clientSocket = new DatagramSocket();
+      System.out.println("Connection Success");
     } catch (SocketException e) {
-      e.printStackTrace();
-    } catch (UnknownHostException e) {
       e.printStackTrace();
     }
   }
 
   public void runFileCopyClient() {
+    connect();
+    FCpacket firstpacket = makeControlPacket();
+    sendPacket(firstpacket);
 
-    while (true) {
-      
-      //read next packet
-      // put in buffer if the buffer is not full
-      //send packet with seq nr nextSeqNr
-      FC_Timer timer  = new FC_Timer(timeoutValue, null, nextSeqNum);
-      timer.start();
-      //increase the timer
+    // read next packet
+    FCpacket nextpacket = makeNextPacket(1);
+    System.out.println(nextpacket);
+    while (nextpacket != null) {
+        // put in buffer if the buffer is not full
+       new RecieveThread().insert(nextpacket);
+      // send packet with seq nr nextSeqNr
+      sendPacket(nextpacket);
+      // start the timer for the packet
+      startTimer(nextpacket);
+      // increase the sequenz Nr
       nextSeqNum++;
-      //If timeout
-      timeoutTask(nextSeqNum -- );
-      //update the next timeout value
-      computeTimeoutValue(timeoutValue);
-      timer.start();
-      //recieve Ack n  and put n in sendbuffer
-       // * mark n as quitted
-      // * timer for n stop
-      timer.interrupt();
-      //compute new roundtriptime
-      //if n == sendbase delete all packet until a not quitted packet in sendbuffer is
-      //set bendbase = seqnr of that packet
-      for(int i = 0; i< senderbuff.size(); i++){
-        if(senderbuff.get(i).isValidACK()){
-          senderbuff.remove(i);
-        }else{
-          sendbase =  senderbuff.get(i).getSeqNum();
-        }
-      }
-      
-      //Todo empfang von quittungen als eigene Thread
-      
-//      if(seq >= this.windowSize || seq >= 100202){
-//        //recieveAck
-//      }else{
-//        ++seq;
-//      }
-//      if (windowSize == 0) {
-//        windowSize = Math.min(senderbuff.size(), maxWindowSize);
-//      }
-//      for (int i = 0; i < windowSize; i++) {
-//        FCpacket packet = senderbuff.get(0);
-//      }
+      nextpacket = makeNextPacket(nextSeqNum);
     }
-    // ToDo!!
+  }
 
-  }
-  
-  private void recieveAck(){
-    
-    
-  }
-  
-  private class recieveThread extends Thread{
-    
-    public void run(){
-      
-      
+  /*
+   * Read a file up to UDP_PACKET_SIZE and make a packet from it
+   * 
+   * @return packet FCpacket
+   */
+  private FCpacket makeNextPacket(long seqNr) {
+    byte[] data = new byte[UDP_PACKET_SIZE - 8];
+    int packetLen = 0;
+    try {
+      packetLen = input.read(data);
+    } catch (IOException e) {
+      e.printStackTrace();
     }
+    FCpacket packet = null;
+    if (packetLen != -1) {
+      packet = new FCpacket(seqNr, data, packetLen);
+    }
+    return packet;
   }
-  
-  private void insertPacketinBuffer(){
-    
-    
+
+  private void sendPacket(FCpacket packet) {
+    // Timer Start
+    packet.setTimestamp(System.currentTimeMillis());
+    FC_Timer timer = new FC_Timer(this.timeoutValue, this, packet.getSeqNum());
+    packet.setTimer(timer);
+    // sendpacket
+    InetAddress serverAdress = null;
+    try {
+      serverAdress = InetAddress.getByName("localhost");
+    } catch (UnknownHostException e) {
+      e.printStackTrace();
+    }
+    byte[] result = packet.getSeqNumBytesAndData();
+    DatagramPacket sendPacket = new DatagramPacket(result, result.length, serverAdress, SERVER_PORT);
+
+    /* Senden des Pakets */
+    try {
+      // sent the packet
+      clientSocket.send(sendPacket);
+    } catch (IOException e) {
+      e.printStackTrace();
+    }
   }
 
   /**
@@ -176,6 +181,13 @@ public class FileCopyClient extends Thread {
     // Count timeouts
     timeouts++;
     // Send the data of the given sequencenr once again
+    // Get packet for sequence Nr seqNum.
+    FCpacket packet = null;
+    if (packet != null) {
+      sendPacket(packet);
+    }
+    startTimer(packet);
+
   }
 
   /**
@@ -218,6 +230,48 @@ public class FileCopyClient extends Thread {
   public static void main(String argv[]) throws Exception {
     FileCopyClient myClient = new FileCopyClient(argv[0], argv[1], argv[2], argv[3], argv[4]);
     myClient.runFileCopyClient();
+  }
+
+  private class RecieveThread extends Thread {
+    DatagramPacket datagramPacket;
+
+    public RecieveThread(DatagramPacket packet) {
+      this.datagramPacket = packet;
+
+    }
+
+    public void run() {
+      try {
+        clientSocket.receive(datagramPacket);
+        byte[] data = datagramPacket.getData();
+        int length = datagramPacket.getLength();
+        FCpacket recievedPaket = new FCpacket(data, length);
+        long n = recievedPaket.getSeqNum();
+        cancelTimer(recievedPaket);
+        remove(n);
+      } catch (IOException e) {
+        e.printStackTrace();
+      }
+    }
+
+    private void remove(long n) {
+      if (n == sendbase) {
+        for (int i = 0; i < senderbuff.size(); i++)
+          if (senderbuff.get(i).isValidACK()) {
+            senderbuff.remove(i);
+          }else {
+             sendbase = senderbuff.get(i).getSeqNum();
+             }
+      }
+    }
+
+    public void insert(FCpacket packet) {
+      if (senderbuff.size() == windowSize) {
+        // wait
+      }
+      senderbuff.add(packet);
+    }
+
   }
 
 }
