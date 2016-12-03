@@ -1,16 +1,24 @@
 package filecopy;
 
 /* FileCopyClient.java
- Version 0.1 - Muss ergaenzt werden!!
+ Version 0.1!!
  Praktikum 3 Rechnernetze BAI4 HAW Hamburg
- Autoren:
+ Autoren:Biraj
  */
-
-import java.io.*;
-import java.net.*;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
+import java.io.IOException;
+import java.io.UnsupportedEncodingException;
+import java.net.DatagramPacket;
+import java.net.DatagramSocket;
+import java.net.InetAddress;
+import java.net.SocketException;
+import java.net.UnknownHostException;
 import java.util.Collections;
-import java.util.Iterator;
 import java.util.LinkedList;
+import java.util.concurrent.locks.Condition;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
 
 public class FileCopyClient extends Thread {
 
@@ -28,11 +36,13 @@ public class FileCopyClient extends Thread {
 
   public String destPath;
 
-  public int windowSize = 10;
+  public int windowSize = 128;
 
   public int maxWindowSize = 128;
 
   public long serverErrorRate;
+
+  private InetAddress SERVER_ADDRESS;
 
   // -------- Variables
   // current default timeout in nanoseconds
@@ -58,26 +68,44 @@ public class FileCopyClient extends Thread {
 
   private int nextSeqNum; // Sequence Number of next packet to be send
 
+  private Lock bufferMutex;
+
+  private final Condition notEmpty;
+
+  private final Condition notFull;
+
+  private boolean sending = true;
   // ... ToDo
 
   // Constructor
   public FileCopyClient(String serverArg, String sourcePathArg, String destPathArg, String windowSizeArg,
       String errorRateArg) {
     servername = serverArg;
-    System.out.println(servername);
+
     sourcePath = sourcePathArg;
     destPath = destPathArg;
     senderbuff = new LinkedList<>();
-    System.out.println(sourcePath);
-    System.out.println(destPath);
     windowSize = Integer.parseInt(windowSizeArg);
     serverErrorRate = Long.parseLong(errorRateArg);
+    bufferMutex = new ReentrantLock();
+    notEmpty = bufferMutex.newCondition();
+    notFull = bufferMutex.newCondition();
+
+  }
+
+  public void init() {
+
+    try {
+      SERVER_ADDRESS = InetAddress.getByName(servername);
+    } catch (UnknownHostException e1) {
+      e1.printStackTrace();
+    }
+
     try {
       input = new FileInputStream(sourcePath);
     } catch (FileNotFoundException e) {
       e.printStackTrace();
     }
-
   }
 
   private void connect() {
@@ -90,24 +118,26 @@ public class FileCopyClient extends Thread {
   }
 
   public void runFileCopyClient() {
+    init();
     connect();
     FCpacket firstpacket = makeControlPacket();
+    insertintoBuffer(firstpacket);
+    new RecieveThread().start();
     sendPacket(firstpacket);
-
+    startTimer(firstpacket);
+    new RecieveThread().start();
     // read next packet
     FCpacket nextpacket = makeNextPacket(1);
-    System.out.println(nextpacket);
     while (nextpacket != null) {
-        // put in buffer if the buffer is not full
-       new RecieveThread().insert(nextpacket);
-      // send packet with seq nr nextSeqNr
+      insertintoBuffer(nextpacket);
       sendPacket(nextpacket);
       // start the timer for the packet
       startTimer(nextpacket);
       // increase the sequenz Nr
-      nextSeqNum++;
-      nextpacket = makeNextPacket(nextSeqNum);
+      // ++nextSeqNum;
+      nextpacket = makeNextPacket(++nextSeqNum);
     }
+    sending = false;
   }
 
   /*
@@ -131,24 +161,11 @@ public class FileCopyClient extends Thread {
   }
 
   private void sendPacket(FCpacket packet) {
-    // Timer Start
-    packet.setTimestamp(System.currentTimeMillis());
-    FC_Timer timer = new FC_Timer(this.timeoutValue, this, packet.getSeqNum());
-    packet.setTimer(timer);
-    // sendpacket
-    InetAddress serverAdress = null;
-    try {
-      serverAdress = InetAddress.getByName("localhost");
-    } catch (UnknownHostException e) {
-      e.printStackTrace();
-    }
     byte[] result = packet.getSeqNumBytesAndData();
-    DatagramPacket sendPacket = new DatagramPacket(result, result.length, serverAdress, SERVER_PORT);
-
-    /* Senden des Pakets */
+    DatagramPacket sendPacket = new DatagramPacket(result, result.length, SERVER_ADDRESS, SERVER_PORT);
     try {
-      // sent the packet
       clientSocket.send(sendPacket);
+      packet.setTimestamp(System.nanoTime());
     } catch (IOException e) {
       e.printStackTrace();
     }
@@ -182,7 +199,7 @@ public class FileCopyClient extends Thread {
     timeouts++;
     // Send the data of the given sequencenr once again
     // Get packet for sequence Nr seqNum.
-    FCpacket packet = null;
+    FCpacket packet = getFromBuffer(seqNum);
     if (packet != null) {
       sendPacket(packet);
     }
@@ -232,44 +249,92 @@ public class FileCopyClient extends Thread {
     myClient.runFileCopyClient();
   }
 
-  private class RecieveThread extends Thread {
-    DatagramPacket datagramPacket;
-
-    public RecieveThread(DatagramPacket packet) {
-      this.datagramPacket = packet;
-
+  public void insertintoBuffer(FCpacket packet) {
+    bufferMutex.lock();
+    while (senderbuff.size() >= maxWindowSize) {
+      try {
+        notFull.await();
+      } catch (InterruptedException e) {
+        e.printStackTrace();
+      }
     }
+    if (!senderbuff.contains(packet)) { // no duplicates!
+      senderbuff.add(packet);
+      // sort in ascending order using the seq num
+      Collections.sort(senderbuff);
+      notEmpty.signal();
+    }
+    bufferMutex.unlock();
+  }
+
+  private void cleanBuffer() {
+    bufferMutex.lock();
+    {
+      while (!senderbuff.isEmpty() && senderbuff.getFirst().isValidACK()) {
+        senderbuff.removeFirst();
+        notFull.signal();
+      }
+    }
+    bufferMutex.unlock();
+  }
+
+  private FCpacket getFromBuffer(long seqNo) {
+    FCpacket retval = null;
+    bufferMutex.lock();
+    int i = 0;
+    for (i = 0; i < senderbuff.size(); i++) {
+      if (senderbuff.get(i).getSeqNum() == seqNo) {
+        break;
+      }
+    }
+    try {
+      testOut("Get: " + i);
+      retval = senderbuff.get(i);
+    } catch (IndexOutOfBoundsException e) {
+    }
+    bufferMutex.unlock();
+    return retval;
+  }
+
+
+  private class RecieveThread extends Thread {
 
     public void run() {
+      receiveAck();
+    }
+
+    private void receiveAck() {
       try {
-        clientSocket.receive(datagramPacket);
-        byte[] data = datagramPacket.getData();
-        int length = datagramPacket.getLength();
-        FCpacket recievedPaket = new FCpacket(data, length);
-        long n = recievedPaket.getSeqNum();
-        cancelTimer(recievedPaket);
-        remove(n);
+        while (sending || !senderbuff.isEmpty()) {
+          byte[] receiveData = new byte[8];
+          DatagramPacket packet = new DatagramPacket(receiveData, 8);
+          clientSocket.receive(packet);
+          long ackNumber = makeLong(packet.getData(), 0, 8);
+          FCpacket acknowlagedPacket = getFromBuffer(ackNumber);
+          if (acknowlagedPacket != null) {
+            cancelTimer(acknowlagedPacket);
+            long duration = System.nanoTime() - acknowlagedPacket.getTimestamp();
+            computeTimeoutValue(duration);
+            acknowlagedPacket.setValidACK(true);
+            System.out.println("recieved ack " + acknowlagedPacket.getSeqNum());
+          }
+          cleanBuffer();
+        }
+
       } catch (IOException e) {
         e.printStackTrace();
       }
     }
 
-    private void remove(long n) {
-      if (n == sendbase) {
-        for (int i = 0; i < senderbuff.size(); i++)
-          if (senderbuff.get(i).isValidACK()) {
-            senderbuff.remove(i);
-          }else {
-             sendbase = senderbuff.get(i).getSeqNum();
-             }
-      }
-    }
+    // Methode von FCpacket to change byte into long
+    private long makeLong(byte[] buf, int i, int length) {
+      long r = 0;
+      length += i;
 
-    public void insert(FCpacket packet) {
-      if (senderbuff.size() == windowSize) {
-        // wait
-      }
-      senderbuff.add(packet);
+      for (int j = i; j < length; j++)
+        r = (r << 8) | (buf[j] & 0xffL);
+
+      return r;
     }
 
   }
