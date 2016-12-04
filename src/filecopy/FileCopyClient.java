@@ -23,7 +23,7 @@ import java.util.concurrent.locks.ReentrantLock;
 public class FileCopyClient extends Thread {
 
   // -------- Constants
-  public final static boolean TEST_OUTPUT_MODE = false;
+  public final static boolean TEST_OUTPUT_MODE = true;
 
   public final int SERVER_PORT = 23000;
 
@@ -38,8 +38,6 @@ public class FileCopyClient extends Thread {
 
   public int windowSize = 5;
 
-  public int maxWindowSize = 5;
-
   public long serverErrorRate;
 
   private InetAddress SERVER_ADDRESS;
@@ -50,19 +48,13 @@ public class FileCopyClient extends Thread {
 
   private DatagramSocket clientSocket;
 
-  private FC_Timer timeoutTimer;
-
   private LinkedList<FCpacket> senderbuff; // Window size
 
   private FileInputStream input;
 
-  private long sendbase;
-
   private long expRTT = 100000000L;
 
   private long jitter = 20;
-
-  private int seq;
 
   private int timeouts; // Number of timeouts
 
@@ -75,13 +67,11 @@ public class FileCopyClient extends Thread {
   private final Condition notFull;
 
   private boolean sending = true;
-  // ... ToDo
 
   // Constructor
   public FileCopyClient(String serverArg, String sourcePathArg, String destPathArg, String windowSizeArg,
       String errorRateArg) {
     servername = serverArg;
-
     sourcePath = sourcePathArg;
     destPath = destPathArg;
     senderbuff = new LinkedList<>();
@@ -178,7 +168,7 @@ public class FileCopyClient extends Thread {
    */
   public void startTimer(FCpacket packet) {
     /* Create, save and start timer for the given FCpacket */
-    System.out.println("Time out for packet :" + packet.getSeqNum() + " is " + timeoutValue);;
+    //System.out.println("Time out for packet :" + packet.getSeqNum() + " is " + timeoutValue);;
     FC_Timer timer = new FC_Timer(timeoutValue, this, packet.getSeqNum());
     packet.setTimer(timer);
     timer.start();
@@ -198,7 +188,8 @@ public class FileCopyClient extends Thread {
    */
   public void timeoutTask(long seqNum) {
     // Count timeouts
-    System.out.println("Ack für Packet:" + seqNum + "not recieved.");
+    String output = "Ack für Packet: " + seqNum + " not recieved.";
+    testOut("Get: " + output);
     timeouts++;
     // Send the data of the given sequencenr once again
     // Get packet for sequence Nr seqNum.
@@ -255,7 +246,7 @@ public class FileCopyClient extends Thread {
 
   public void insertintoBuffer(FCpacket packet) {
     bufferMutex.lock();
-    while (senderbuff.size() >= maxWindowSize) {
+    while (senderbuff.size() >= windowSize) {
       try {
         notFull.await();
       } catch (InterruptedException e) {
