@@ -36,9 +36,9 @@ public class FileCopyClient extends Thread {
 
   public String destPath;
 
-  public int windowSize = 128;
+  public int windowSize = 5;
 
-  public int maxWindowSize = 128;
+  public int maxWindowSize = 5;
 
   public long serverErrorRate;
 
@@ -58,9 +58,9 @@ public class FileCopyClient extends Thread {
 
   private long sendbase;
 
-  private double expRTT;
+  private long expRTT = 100000000L;
 
-  private double jitter;
+  private long jitter = 20;
 
   private int seq;
 
@@ -126,16 +126,17 @@ public class FileCopyClient extends Thread {
     sendPacket(firstpacket);
     startTimer(firstpacket);
     new RecieveThread().start();
+    nextSeqNum++;
     // read next packet
-    FCpacket nextpacket = makeNextPacket(1);
+    FCpacket nextpacket = makeNextPacket(nextSeqNum);
     while (nextpacket != null) {
       insertintoBuffer(nextpacket);
       sendPacket(nextpacket);
       // start the timer for the packet
       startTimer(nextpacket);
       // increase the sequenz Nr
-      // ++nextSeqNum;
-      nextpacket = makeNextPacket(++nextSeqNum);
+      nextSeqNum++;
+      nextpacket = makeNextPacket(nextSeqNum);
     }
     sending = false;
   }
@@ -177,6 +178,7 @@ public class FileCopyClient extends Thread {
    */
   public void startTimer(FCpacket packet) {
     /* Create, save and start timer for the given FCpacket */
+    System.out.println("Time out for packet :" + packet.getSeqNum() + " is " + timeoutValue);;
     FC_Timer timer = new FC_Timer(timeoutValue, this, packet.getSeqNum());
     packet.setTimer(timer);
     timer.start();
@@ -196,6 +198,7 @@ public class FileCopyClient extends Thread {
    */
   public void timeoutTask(long seqNum) {
     // Count timeouts
+    System.out.println("Ack für Packet:" + seqNum + "not recieved.");
     timeouts++;
     // Send the data of the given sequencenr once again
     // Get packet for sequence Nr seqNum.
@@ -203,6 +206,7 @@ public class FileCopyClient extends Thread {
     if (packet != null) {
       sendPacket(packet);
     }
+    packet.setTimestamp(System.nanoTime());
     startTimer(packet);
 
   }
@@ -214,9 +218,9 @@ public class FileCopyClient extends Thread {
   public void computeTimeoutValue(long sampleRTT) {
     double x = 0.25;
     double y = x / 2;
-    expRTT = (1 - y) * expRTT + y * sampleRTT;
-    jitter = (1 - x) * jitter + x * Math.abs(sampleRTT - expRTT);
-    timeoutValue = Double.doubleToLongBits(expRTT + 4 * jitter);
+    expRTT = (long)((1 - y) * expRTT + y * sampleRTT);
+    jitter = (long)((1 - x) * jitter + x * Math.abs(sampleRTT - expRTT));
+    timeoutValue =  (expRTT + 4 * jitter);
   }
 
   /**
